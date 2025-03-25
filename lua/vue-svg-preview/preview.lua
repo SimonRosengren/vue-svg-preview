@@ -99,18 +99,168 @@ function M.svg_to_ascii(svg_content)
   local ascii_width = math.floor(width * scale_factor)
   local ascii_height = math.floor(height * scale_factor)
   
-  -- Create a simple ASCII representation
+  -- Create a canvas for our ASCII art
+  local canvas = {}
+  for i = 1, ascii_height do
+    canvas[i] = {}
+    for j = 1, ascii_width do
+      canvas[i][j] = " "
+    end
+  end
+  
+  -- Analyze SVG content and draw basic shapes on our ASCII canvas
+  -- Draw circles if present
+  for cx, cy, r in svg_content:gmatch('circle[^>]-cx="([^"]+)"[^>]-cy="([^"]+)"[^>]-r="([^"]+)"') do
+    local center_x = tonumber(cx:gsub("px", "")) or 0
+    local center_y = tonumber(cy:gsub("px", "")) or 0
+    local radius = tonumber(r:gsub("px", "")) or 0
+    
+    -- Scale to our ASCII canvas
+    center_x = math.floor((center_x / width) * ascii_width)
+    center_y = math.floor((center_y / height) * ascii_height)
+    radius = math.floor((radius / math.max(width, height)) * math.min(ascii_width, ascii_height) * 0.8)
+    
+    -- Draw a circle using ASCII
+    for y = 1, ascii_height do
+      for x = 1, ascii_width do
+        local dx = x - center_x
+        local dy = y - center_y
+        local distance = math.sqrt(dx * dx + dy * dy)
+        if math.abs(distance - radius) < 0.5 then
+          canvas[y][x] = "o"
+        elseif distance < radius then
+          -- Fill the inside with a lighter character
+          if canvas[y][x] == " " then
+            canvas[y][x] = "·"
+          end
+        end
+      end
+    end
+  end
+  
+  -- Draw rectangles if present
+  for x, y, w, h in svg_content:gmatch('rect[^>]-x="([^"]+)"[^>]-y="([^"]+)"[^>]-width="([^"]+)"[^>]-height="([^"]+)"') do
+    local rect_x = tonumber(x:gsub("px", "")) or 0
+    local rect_y = tonumber(y:gsub("px", "")) or 0
+    local rect_w = tonumber(w:gsub("px", "")) or 0
+    local rect_h = tonumber(h:gsub("px", "")) or 0
+    
+    -- Scale to our ASCII canvas
+    local start_x = math.floor((rect_x / width) * ascii_width) + 1
+    local start_y = math.floor((rect_y / height) * ascii_height) + 1
+    local end_x = math.floor(((rect_x + rect_w) / width) * ascii_width)
+    local end_y = math.floor(((rect_y + rect_h) / height) * ascii_height)
+    
+    -- Ensure we stay within bounds
+    start_x = math.max(1, math.min(start_x, ascii_width))
+    start_y = math.max(1, math.min(start_y, ascii_height))
+    end_x = math.max(1, math.min(end_x, ascii_width))
+    end_y = math.max(1, math.min(end_y, ascii_height))
+    
+    -- Draw the rectangle
+    for y = start_y, end_y do
+      for x = start_x, end_x do
+        if x == start_x or x == end_x or y == start_y or y == end_y then
+          canvas[y][x] = "+"
+        else
+          if canvas[y][x] == " " then
+            canvas[y][x] = "#"
+          end
+        end
+      end
+    end
+  end
+  
+  -- If we have paths, try to represent them with simple lines
+  if svg_content:match("<path") then
+    -- Find the center of the canvas
+    local center_x = math.floor(ascii_width / 2)
+    local center_y = math.floor(ascii_height / 2)
+    
+    -- Draw a simple representation of a path
+    -- This is a very simplified approach - just to show something is there
+    for i = 1, ascii_width do
+      local y = center_y + math.floor(math.sin(i / ascii_width * math.pi * 2) * (ascii_height / 4))
+      if y >= 1 and y <= ascii_height then
+        canvas[y][i] = "*"
+      end
+    end
+  end
+  
+  -- If we have polygons, draw a simple polygon shape
+  if svg_content:match("<polygon") then
+    -- Find points from the first polygon
+    local points_str = svg_content:match('polygon[^>]-points="([^"]+)"')
+    if points_str then
+      local points = {}
+      for x, y in points_str:gmatch("([%d%.]+),([%d%.]+)") do
+        local px = tonumber(x) or 0
+        local py = tonumber(y) or 0
+        
+        -- Scale to our ASCII canvas
+        px = math.floor((px / width) * ascii_width)
+        py = math.floor((py / height) * ascii_height)
+        
+        -- Ensure we stay within bounds
+        px = math.max(1, math.min(px, ascii_width))
+        py = math.max(1, math.min(py, ascii_height))
+        
+        table.insert(points, {x = px, y = py})
+      end
+      
+      -- Connect the points with lines
+      for i = 1, #points do
+        local p1 = points[i]
+        local p2 = points[i % #points + 1]  -- Connect back to the first point
+        
+        -- Draw a line between p1 and p2 (Bresenham's line algorithm)
+        local dx = math.abs(p2.x - p1.x)
+        local dy = math.abs(p2.y - p1.y)
+        local sx = p1.x < p2.x and 1 or -1
+        local sy = p1.y < p2.y and 1 or -1
+        local err = dx - dy
+        
+        local x, y = p1.x, p1.y
+        while x ~= p2.x or y ~= p2.y do
+          if x >= 1 and x <= ascii_width and y >= 1 and y <= ascii_height then
+            canvas[y][x] = "/"
+          end
+          
+          local e2 = 2 * err
+          if e2 > -dy then
+            err = err - dy
+            x = x + sx
+          end
+          if e2 < dx then
+            err = err + dx
+            y = y + sy
+          end
+        end
+      end
+    end
+  end
+  
+  -- Convert our canvas to ASCII art lines
   local ascii_art = {}
   
   -- Add header with dimensions
   table.insert(ascii_art, "SVG Icon Preview (" .. width .. "x" .. height .. ")")
   table.insert(ascii_art, string.rep("-", ascii_width + 4))
   
-  -- Create a simple box representation
+  -- Add top border
   table.insert(ascii_art, "+" .. string.rep("-", ascii_width) .. "+")
+  
+  -- Add the canvas content
   for i = 1, ascii_height do
-    table.insert(ascii_art, "|" .. string.rep(" ", ascii_width) .. "|")
+    local line = "|"
+    for j = 1, ascii_width do
+      line = line .. canvas[i][j]
+    end
+    line = line .. "|"
+    table.insert(ascii_art, line)
   end
+  
+  -- Add bottom border
   table.insert(ascii_art, "+" .. string.rep("-", ascii_width) .. "+")
   
   -- Add some info about the SVG
@@ -119,16 +269,16 @@ function M.svg_to_ascii(svg_content)
   
   -- Check for common SVG elements
   if svg_content:match("<path") then
-    table.insert(ascii_art, "- Contains path elements")
+    table.insert(ascii_art, "- Contains path elements (shown as sine wave)")
   end
   if svg_content:match("<circle") then
-    table.insert(ascii_art, "- Contains circle elements")
+    table.insert(ascii_art, "- Contains circle elements (shown as 'o')")
   end
   if svg_content:match("<rect") then
-    table.insert(ascii_art, "- Contains rectangle elements")
+    table.insert(ascii_art, "- Contains rectangle elements (shown as '+')")
   end
   if svg_content:match("<polygon") then
-    table.insert(ascii_art, "- Contains polygon elements")
+    table.insert(ascii_art, "- Contains polygon elements (shown as '/')")
   end
   if svg_content:match("<g") then
     table.insert(ascii_art, "- Contains group elements")
