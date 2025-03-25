@@ -13,6 +13,9 @@ function M.setup(opts)
     preview_delay = 100,       -- Delay before showing preview (ms)
     ascii_max_width = 40,      -- Maximum width for ASCII art preview
     ascii_max_height = 20,     -- Maximum height for ASCII art preview
+    use_browser = false,       -- Use external browser for SVG preview
+    browser_command = nil,     -- Custom browser command (nil for system default)
+    temp_file_path = "/tmp",   -- Directory to store temporary SVG files
   }
   
   -- Merge user options with defaults

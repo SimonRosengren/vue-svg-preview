@@ -1,11 +1,81 @@
 -- SVG Preview Module
--- Handles the display of SVG content in a floating window
+-- Handles the display of SVG content in a floating window or browser
 
 local M = {}
 
 -- Store the window and buffer IDs for the preview
 local preview_win = nil
 local preview_buf = nil
+local temp_svg_file = nil
+
+-- Get options from main module
+local function get_options()
+  return require('vue-svg-preview').options or {}
+end
+
+-- Helper function to open a URL in the default browser
+local function open_in_browser(url)
+  local opts = get_options()
+  local cmd
+  
+  if opts.browser_command then
+    cmd = string.format('%s "%s"', opts.browser_command, url)
+  else
+    -- Detect OS and use appropriate command
+    if vim.fn.has('mac') == 1 then
+      cmd = string.format('open "%s"', url)
+    elseif vim.fn.has('unix') == 1 then
+      cmd = string.format('xdg-open "%s"', url)
+    elseif vim.fn.has('win32') == 1 then
+      cmd = string.format('start "" "%s"', url)
+    else
+      vim.notify("Unsupported OS for browser preview", vim.log.levels.ERROR)
+      return false
+    end
+  end
+  
+  local result = vim.fn.system(cmd)
+  if vim.v.shell_error ~= 0 then
+    vim.notify("Failed to open browser: " .. result, vim.log.levels.ERROR)
+    return false
+  end
+  
+  return true
+end
+
+-- Create a temporary file with SVG content
+local function create_temp_svg_file(svg_content)
+  local opts = get_options()
+  local temp_dir = opts.temp_file_path or "/tmp"
+  
+  -- Create a unique filename
+  local filename = string.format("%s/vue_svg_preview_%s.svg", 
+                                temp_dir, 
+                                os.time())
+  
+  -- Write SVG content to file
+  local file = io.open(filename, "w")
+  if not file then
+    vim.notify("Failed to create temporary SVG file", vim.log.levels.ERROR)
+    return nil
+  end
+  
+  file:write(svg_content)
+  file:close()
+  
+  -- Store the filename for cleanup later
+  temp_svg_file = filename
+  
+  return filename
+end
+
+-- Clean up temporary files
+local function cleanup_temp_files()
+  if temp_svg_file and vim.fn.filereadable(temp_svg_file) == 1 then
+    os.remove(temp_svg_file)
+    temp_svg_file = nil
+  end
+end
 
 -- Convert SVG to ASCII art for in-editor preview
 function M.svg_to_ascii(svg_content)
@@ -72,11 +142,42 @@ function M.svg_to_ascii(svg_content)
   return ascii_art
 end
 
--- Show SVG preview in a floating window
+-- Show SVG preview in a floating window or browser
 function M.show_preview(svg_content)
   -- Close existing preview if it exists
   M.close_preview()
   
+  local opts = get_options()
+  
+  -- If browser preview is enabled, use that
+  if opts.use_browser then
+    -- Create a temporary SVG file
+    local svg_file = create_temp_svg_file(svg_content)
+    if svg_file then
+      -- Convert to file:// URL
+      local url = "file://" .. svg_file
+      
+      -- Open in browser
+      if open_in_browser(url) then
+        vim.notify("SVG opened in browser", vim.log.levels.INFO)
+      else
+        -- Fall back to ASCII preview if browser fails
+        vim.notify("Failed to open browser, falling back to ASCII preview", vim.log.levels.WARN)
+        show_ascii_preview(svg_content)
+      end
+    else
+      -- Fall back to ASCII preview if file creation fails
+      vim.notify("Failed to create temporary file, falling back to ASCII preview", vim.log.levels.WARN)
+      show_ascii_preview(svg_content)
+    end
+  else
+    -- Use ASCII preview in Neovim
+    show_ascii_preview(svg_content)
+  end
+end
+
+-- Show ASCII art preview in a floating window
+function show_ascii_preview(svg_content)
   -- Create a new buffer for the preview
   preview_buf = vim.api.nvim_create_buf(false, true)
   
@@ -146,6 +247,9 @@ function M.close_preview()
     vim.api.nvim_buf_delete(preview_buf, { force = true })
     preview_buf = nil
   end
+  
+  -- Clean up any temporary files
+  cleanup_temp_files()
 end
 
 return M
