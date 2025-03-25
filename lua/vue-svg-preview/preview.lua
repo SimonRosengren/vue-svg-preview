@@ -2,11 +2,12 @@
 -- Handles the display of SVG content in a floating window or browser
 
 local M = {}
+local terminal_graphics = require('vue-svg-preview.terminal_graphics')
 
 -- Store the window and buffer IDs for the preview
 local preview_win = nil
 local preview_buf = nil
-local temp_svg_file = nil
+local temp_files = {}
 
 -- Get options from main module
 local function get_options()
@@ -64,17 +65,15 @@ local function create_temp_svg_file(svg_content)
   file:close()
   
   -- Store the filename for cleanup later
-  temp_svg_file = filename
+  table.insert(temp_files, filename)
   
   return filename
 end
 
 -- Clean up temporary files
 local function cleanup_temp_files()
-  if temp_svg_file and vim.fn.filereadable(temp_svg_file) == 1 then
-    os.remove(temp_svg_file)
-    temp_svg_file = nil
-  end
+  terminal_graphics.cleanup_files(temp_files)
+  temp_files = {}
 end
 
 -- Convert SVG to ASCII art for in-editor preview
@@ -142,7 +141,7 @@ function M.svg_to_ascii(svg_content)
   return ascii_art
 end
 
--- Show SVG preview in a floating window or browser
+-- Show SVG preview using the best available method
 function M.show_preview(svg_content)
   -- Close existing preview if it exists
   M.close_preview()
@@ -160,18 +159,126 @@ function M.show_preview(svg_content)
       -- Open in browser
       if open_in_browser(url) then
         vim.notify("SVG opened in browser", vim.log.levels.INFO)
+        return
       else
-        -- Fall back to ASCII preview if browser fails
-        vim.notify("Failed to open browser, falling back to ASCII preview", vim.log.levels.WARN)
-        show_ascii_preview(svg_content)
+        vim.notify("Failed to open browser, trying terminal graphics", vim.log.levels.WARN)
       end
-    else
-      -- Fall back to ASCII preview if file creation fails
-      vim.notify("Failed to create temporary file, falling back to ASCII preview", vim.log.levels.WARN)
-      show_ascii_preview(svg_content)
     end
+  end
+  
+  -- Try terminal graphics if not using browser or browser failed
+  local graphics_capability = terminal_graphics.detect_capabilities()
+  
+  if graphics_capability ~= "none" then
+    -- Create preview window first
+    preview_buf = vim.api.nvim_create_buf(false, true)
+    
+    -- Set buffer content with loading message
+    vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, {"Loading SVG preview...", "", "Please wait..."})
+    
+    -- Calculate window size
+    local width = opts.max_width / 4 + 10  -- Approximate character width
+    local height = opts.max_height / 8 + 5  -- Approximate character height
+    
+    -- Create the floating window
+    preview_win = vim.api.nvim_open_win(preview_buf, false, {
+      relative = "editor",
+      width = width,
+      height = height,
+      row = math.floor((vim.o.lines - height) / 2),
+      col = math.floor((vim.o.columns - width) / 2),
+      style = "minimal",
+      border = "rounded",
+      title = "SVG Preview",
+      title_pos = "center"
+    })
+    
+    -- Set buffer options
+    vim.api.nvim_buf_set_option(preview_buf, "modifiable", false)
+    vim.api.nvim_buf_set_option(preview_buf, "bufhidden", "wipe")
+    
+    -- Set window options
+    vim.api.nvim_win_set_option(preview_win, "winblend", 10)
+    
+    -- Convert SVG to PNG
+    terminal_graphics.svg_to_png(svg_content, function(png_file)
+      if not png_file then
+        -- Conversion failed, fall back to ASCII
+        vim.notify("Failed to convert SVG, falling back to ASCII preview", vim.log.levels.WARN)
+        if preview_win and vim.api.nvim_win_is_valid(preview_win) then
+          vim.api.nvim_win_close(preview_win, true)
+          preview_win = nil
+        end
+        if preview_buf and vim.api.nvim_buf_is_valid(preview_buf) then
+          vim.api.nvim_buf_delete(preview_buf, { force = true })
+          preview_buf = nil
+        end
+        show_ascii_preview(svg_content)
+        return
+      end
+      
+      -- Store the PNG file for cleanup
+      table.insert(temp_files, png_file)
+      
+      -- Make buffer modifiable again
+      if preview_buf and vim.api.nvim_buf_is_valid(preview_buf) then
+        vim.api.nvim_buf_set_option(preview_buf, "modifiable", true)
+        
+        -- Clear the buffer
+        vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, {})
+        
+        -- Add empty lines for the image
+        local lines = {}
+        for i = 1, math.floor(opts.max_height / 16) do
+          table.insert(lines, "")
+        end
+        vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, lines)
+        
+        -- Display the image using the appropriate protocol
+        local success = false
+        if graphics_capability == "kitty" then
+          success = terminal_graphics.display_kitty_graphics(png_file, preview_win, preview_buf)
+        elseif graphics_capability == "sixel" then
+          success = terminal_graphics.display_sixel_graphics(png_file, preview_win, preview_buf)
+        end
+        
+        -- Add a footer
+        vim.api.nvim_buf_set_lines(preview_buf, -1, -1, false, {"", "Press 'q' to close this preview"})
+        vim.api.nvim_buf_set_option(preview_buf, "modifiable", false)
+        
+        -- If terminal graphics failed, fall back to ASCII
+        if not success then
+          vim.notify("Terminal graphics failed, falling back to ASCII preview", vim.log.levels.WARN)
+          if preview_win and vim.api.nvim_win_is_valid(preview_win) then
+            vim.api.nvim_win_close(preview_win, true)
+            preview_win = nil
+          end
+          if preview_buf and vim.api.nvim_buf_is_valid(preview_buf) then
+            vim.api.nvim_buf_delete(preview_buf, { force = true })
+            preview_buf = nil
+          end
+          show_ascii_preview(svg_content)
+        else
+          -- Add keymapping to close the preview
+          vim.api.nvim_buf_set_keymap(preview_buf, 'n', 'q', '', {
+            callback = function() M.close_preview() end,
+            noremap = true,
+            silent = true
+          })
+          
+          -- Set up autocmd to close the preview when leaving the buffer
+          vim.api.nvim_create_autocmd({"BufLeave", "BufWinLeave"}, {
+            buffer = vim.api.nvim_get_current_buf(),
+            callback = function()
+              M.close_preview()
+            end,
+            once = true
+          })
+        end
+      end
+    end)
   else
-    -- Use ASCII preview in Neovim
+    -- No terminal graphics available, use ASCII preview
     show_ascii_preview(svg_content)
   end
 end
@@ -250,6 +357,11 @@ function M.close_preview()
   
   -- Clean up any temporary files
   cleanup_temp_files()
+  
+  -- Clear any terminal graphics
+  if vim.fn.executable('kitty') == 1 then
+    vim.fn.system("kitty +kitten icat --clear --silent")
+  end
 end
 
 return M

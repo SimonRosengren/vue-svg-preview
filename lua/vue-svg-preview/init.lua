@@ -16,6 +16,11 @@ function M.setup(opts)
     use_browser = false,       -- Use external browser for SVG preview
     browser_command = nil,     -- Custom browser command (nil for system default)
     temp_file_path = "/tmp",   -- Directory to store temporary SVG files
+    use_terminal_graphics = true, -- Try to use terminal graphics protocols
+    graphics_implementation = "auto", -- "auto", "kitty", "sixel", or "none"
+    max_height = 300,          -- Maximum height for terminal graphics
+    max_width = 300,           -- Maximum width for terminal graphics
+    conversion_timeout = 2000, -- Timeout for SVG conversion in ms
   }
   
   -- Merge user options with defaults
