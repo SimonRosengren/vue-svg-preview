@@ -1,3 +1,0 @@
--- Vue SVG Preview Plugin for Neovim
--- Automatically detects and previews SVG content in Vue files
--- This plugin will scan Vue files for SVG content and display a preview in a floating window
