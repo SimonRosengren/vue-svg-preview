@@ -15,7 +15,7 @@ A Neovim plugin that automatically detects and previews SVG content in Vue files
 
 ```lua
 use {
-  'yourusername/vue-svg-preview',
+  'simonrosengren/vue-svg-preview',
   config = function()
     require('vue-svg-preview').setup()
   end
@@ -25,8 +25,8 @@ use {
 ### Using [lazy.nvim](https://github.com/folke/lazy.nvim)
 
 ```lua
-{
-  'yourusername/vue-svg-preview',
+return {
+  'simonrosengren/vue-svg-preview',
   config = function()
     require('vue-svg-preview').setup()
   end
