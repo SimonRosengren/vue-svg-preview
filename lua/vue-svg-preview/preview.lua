@@ -7,6 +7,71 @@ local M = {}
 local preview_win = nil
 local preview_buf = nil
 
+-- Convert SVG to ASCII art for in-editor preview
+function M.svg_to_ascii(svg_content)
+  if not svg_content then
+    return {"No SVG content found"}
+  end
+  
+  -- Extract width and height from SVG if available
+  local width = svg_content:match('width="([^"]+)"') or "24"
+  local height = svg_content:match('height="([^"]+)"') or "24"
+  
+  -- Remove units if present
+  width = width:gsub("px", ""):gsub("em", ""):gsub("rem", "")
+  height = height:gsub("px", ""):gsub("em", ""):gsub("rem", "")
+  
+  -- Convert to numbers
+  width = tonumber(width) or 24
+  height = tonumber(height) or 24
+  
+  -- Scale to reasonable size for ASCII art (max 40x20)
+  local scale_factor = math.min(40 / width, 20 / height)
+  local ascii_width = math.floor(width * scale_factor)
+  local ascii_height = math.floor(height * scale_factor)
+  
+  -- Create a simple ASCII representation
+  local ascii_art = {}
+  
+  -- Add header with dimensions
+  table.insert(ascii_art, "SVG Icon Preview (" .. width .. "x" .. height .. ")")
+  table.insert(ascii_art, string.rep("-", ascii_width + 4))
+  
+  -- Create a simple box representation
+  table.insert(ascii_art, "+" .. string.rep("-", ascii_width) .. "+")
+  for i = 1, ascii_height do
+    table.insert(ascii_art, "|" .. string.rep(" ", ascii_width) .. "|")
+  end
+  table.insert(ascii_art, "+" .. string.rep("-", ascii_width) .. "+")
+  
+  -- Add some info about the SVG
+  table.insert(ascii_art, "")
+  table.insert(ascii_art, "SVG Content Summary:")
+  
+  -- Check for common SVG elements
+  if svg_content:match("<path") then
+    table.insert(ascii_art, "- Contains path elements")
+  end
+  if svg_content:match("<circle") then
+    table.insert(ascii_art, "- Contains circle elements")
+  end
+  if svg_content:match("<rect") then
+    table.insert(ascii_art, "- Contains rectangle elements")
+  end
+  if svg_content:match("<polygon") then
+    table.insert(ascii_art, "- Contains polygon elements")
+  end
+  if svg_content:match("<g") then
+    table.insert(ascii_art, "- Contains group elements")
+  end
+  
+  -- Add footer
+  table.insert(ascii_art, "")
+  table.insert(ascii_art, "Press 'q' to close this preview")
+  
+  return ascii_art
+end
+
 -- Show SVG preview in a floating window
 function M.show_preview(svg_content)
   -- Close existing preview if it exists
@@ -15,27 +80,19 @@ function M.show_preview(svg_content)
   -- Create a new buffer for the preview
   preview_buf = vim.api.nvim_create_buf(false, true)
   
-  -- Set buffer content with the SVG and some HTML wrapper
-  local html_content = {
-    "<!DOCTYPE html>",
-    "<html>",
-    "<head>",
-    "  <style>",
-    "    body { display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #333; }",
-    "    svg { max-width: 90%; max-height: 90%; }",
-    "  </style>",
-    "</head>",
-    "<body>",
-    "  " .. (svg_content or "No SVG content found"),
-    "</body>",
-    "</html>"
-  }
+  -- Convert SVG to ASCII art for preview
+  local ascii_preview = M.svg_to_ascii(svg_content)
   
-  vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, html_content)
+  -- Set buffer content with the ASCII preview
+  vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, ascii_preview)
   
-  -- Calculate window size (40% of editor size)
-  local width = math.floor(vim.o.columns * 0.4)
-  local height = math.floor(vim.o.lines * 0.4)
+  -- Calculate window size based on content
+  local width = 0
+  for _, line in ipairs(ascii_preview) do
+    width = math.max(width, #line)
+  end
+  width = math.min(width + 4, vim.o.columns - 10)  -- Add padding, limit to screen width
+  local height = math.min(#ascii_preview + 2, vim.o.lines - 6)  -- Add padding, limit to screen height
   
   -- Calculate window position (centered)
   local row = math.floor((vim.o.lines - height) / 2)
@@ -60,9 +117,6 @@ function M.show_preview(svg_content)
   
   -- Set window options
   vim.api.nvim_win_set_option(preview_win, "winblend", 10)
-  
-  -- Save the preview content to a temporary file and open it in a browser
-  M.open_in_browser(html_content)
   
   -- Set up autocmd to close the preview when leaving the buffer
   vim.api.nvim_create_autocmd({"BufLeave", "BufWinLeave"}, {
@@ -91,41 +145,6 @@ function M.close_preview()
   if preview_buf and vim.api.nvim_buf_is_valid(preview_buf) then
     vim.api.nvim_buf_delete(preview_buf, { force = true })
     preview_buf = nil
-  end
-end
-
--- Open the SVG in a browser for better rendering
-function M.open_in_browser(html_content)
-  -- Create a temporary file
-  local temp_file = os.tmpname() .. ".html"
-  
-  -- Write the HTML content to the file
-  local file = io.open(temp_file, "w")
-  if file then
-    file:write(table.concat(html_content, "\n"))
-    file:close()
-    
-    -- Open the file in the default browser
-    local os_name = vim.loop.os_uname().sysname
-    local cmd
-    
-    if os_name == "Darwin" then  -- macOS
-      cmd = "open " .. temp_file
-    elseif os_name == "Linux" then
-      cmd = "xdg-open " .. temp_file
-    elseif os_name:match("Windows") then
-      cmd = "start " .. temp_file
-    end
-    
-    if cmd then
-      -- Run the command asynchronously
-      vim.fn.jobstart(cmd)
-      
-      -- Schedule cleanup of the temporary file
-      vim.defer_fn(function()
-        os.remove(temp_file)
-      end, 5000)  -- Remove after 5 seconds
-    end
   end
 end
 

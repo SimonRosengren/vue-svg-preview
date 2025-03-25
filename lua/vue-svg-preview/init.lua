@@ -10,8 +10,9 @@ function M.setup(opts)
   -- Apply default options
   local defaults = {
     auto_preview = true,       -- Automatically preview SVGs in Vue files
-    browser_preview = true,    -- Open preview in browser
     preview_delay = 100,       -- Delay before showing preview (ms)
+    ascii_max_width = 40,      -- Maximum width for ASCII art preview
+    ascii_max_height = 20,     -- Maximum height for ASCII art preview
   }
   
   -- Merge user options with defaults
